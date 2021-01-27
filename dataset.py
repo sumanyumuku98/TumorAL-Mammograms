@@ -18,6 +18,8 @@ aiimsImg_path="./data/AIIMS_Mammograms/%s" % data_mode
 aiimsAnn_path="./data/AIIMS_Mammograms/anns/%s_labels.csv" % data_mode
 valAiimsImg_path="./data/AIIMS_Mammograms/Val"
 valAiimsAnn_path="./data/AIIMS_Mammograms/anns/Val_labels.csv"
+testAiimsImg_path="./data/AIIMS_Mammograms/Test"
+testAiimsAnn_path="./data/AIIMS_Mammograms/anns/Test_labels.csv"
 # Add AIIMS and Public Dataset Class for Mammogram Data
 
 class AIIMS(Dataset):
@@ -83,6 +85,15 @@ class AIIMS(Dataset):
 
     def __len__(self):
         return len(self.image_ids)
+
+    def getPosFileNames(self):
+        pos_filenames=[]
+        for id_ in self.image_ids:
+            anns = self.df[self.df["image_id"]==id_]
+            pos_filenames.append(anns["filename"].iloc[0])
+        return pos_filenames
+
+
 
 class CBIS_DDSM(Dataset):
     def __init__(self):

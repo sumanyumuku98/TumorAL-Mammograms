@@ -156,8 +156,8 @@ def evaluate(model, data_loader, device, save_dir, class_names=[], save_in_txt=F
                     cls_name = class_names[label.item()]
 
                     # Do not save results of inspect class
-                    if cls_name==inspect_class:
-                        continue
+                    # if cls_name==inspect_class:
+                    #     continue
                     score_ = score.item()
                     bbox_ = box.tolist()
                     str_ = "%s %.4f %d %d %d %d\n" % (cls_name, score_, bbox_[0], bbox_[1], bbox_[2], bbox_[3])
@@ -176,8 +176,8 @@ def evaluate(model, data_loader, device, save_dir, class_names=[], save_in_txt=F
 
                     # Do not save results of inspect class
 
-                    if cls_name==inspect_class:
-                        continue
+                    # if cls_name==inspect_class:
+                    #     continue
                     bbox_ = box.tolist()
 
                     str_ = "%s %d %d %d %d\n" % (cls_name, bbox_[0], bbox_[1], bbox_[2], bbox_[3])
