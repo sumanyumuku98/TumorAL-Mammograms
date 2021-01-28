@@ -30,7 +30,7 @@ ignore_filenames=["RAD129592_20151208_5_FILE04257452.png"]
 preprocess=torchvision.transforms.ToTensor()
 
 parser = argparse.ArgumentParser(description="For generating fROC on AIIMS Test Data")
-parser.add_argument("--img_dir", type=str)
+parser.add_argument("--img_dir", type=str, help="Dir path for AIIMS test dir")
 # parser.add_argument("--ann_path", type=str)
 parser.add_argument("--checkpoint", type=str)
 parser.add_argument("--save_dir", type=str, required=True)
@@ -101,7 +101,11 @@ for negImgName in tqdm(neg_filenames):
             f.write(str_)
 
 
-# os.system("python compute_froc_with_neg_data.py --posDet ")
+pos_dir = os.path.join(save_dir, "detections")+"/"
+GT_dir = os.path.join(save_dir, "groundTruths")+"/"
+neg_dir = neg_dir+"/"
+
+os.system("python compute_froc_with_neg_data.py --posDet %s --negDet %s --GTpath %s --save_dir %s" % (pos_dir, neg_dir, GT_dir, save_dir))
 
 
 
