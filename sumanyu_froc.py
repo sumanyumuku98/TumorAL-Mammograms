@@ -68,6 +68,10 @@ for det_file, label_file in zip(pos_files, GT_files):
     with open(det_file, "r") as f:
         dets = f.readlines()
     
+    if len(dets)==0:
+        scores.append(0.0)
+        continue
+
     for ind in range(len(dets)):
         words = dets[ind].split()
         temp_score_list.append(float(words[1]))
@@ -82,6 +86,10 @@ for neg_file in neg_files:
     with open(neg_file, "r") as f:
         negs = f.readlines()
     
+    if len(negs)==0:
+        scores.append(0.0)
+        continue
+
     for ind in range(len(negs)):
         words = negs[ind].split()
         temp_score_list.append(float(words[1]))
