@@ -87,12 +87,12 @@ def maxEntropy(cls_logits:list, image_ids:list, budget:int):
 
 
 class kCenterGreedy():
-    def __init__(self, X, metric='euclidean'):
+    def __init__(self, X, metric='euclidean', already_selected=[]):
         self.features =X
         self.metric = metric
         self.min_distances = None
         self.n_obs = X.shape[0]
-        self.already_selected = []
+        self.already_selected = already_selected
     def update_distances(self, cluster_centers, only_new=True, reset_dist=False):
 
         if reset_dist:
@@ -103,36 +103,39 @@ class kCenterGreedy():
         if cluster_centers:
             x = self.features[cluster_centers]
             dist = pairwise_distances(self.features,x,metric='euclidean')
+#             print(dist)
+#             print(dist.shape)
             if self.min_distances is None:
                 self.min_distances = np.min(dist, axis=1).reshape(-1,1)
             else:
                 self.min_distances = np.minimum(self.min_distances, dist)
+            
 
-    def select_batch(self, already_selected, N):
+    def select_batch(self, N):
         try:
             print('Calculating distances...')
-            self.update_distances(already_selected, only_new=False, reset_dist=True)
+            self.update_distances(self.already_selected, only_new=False, reset_dist=True)
         except:
             print('Using flat_X as features.')
-            self.update_distances(already_selected, only_new=True, reset_dist=False)
+            self.update_distances(self.already_selected, only_new=True, reset_dist=False)
         new_batch = []
         
         for idx in range(N):
-            if self.already_selected is None or idx == 0:
+            if not self.already_selected:
+#                 print("random selection being done")
                 ind = np.random.choice(np.arange(self.n_obs))
             else:
+#                 print("No random selection being done")
                 ind = np.argmax(self.min_distances)
-            assert ind not in already_selected
+            assert ind not in self.already_selected
             self.update_distances([ind], only_new=True, reset_dist=False)
-
+            self.already_selected.append(ind)
             new_batch.append(ind)
         print('Maximum distance from cluster centers is %0.2f'% max(self.min_distances))
-        self.already_selected = already_selected
+#         self.already_selected = already_selected
         return new_batch
 
-
-
-def coreset(points_:list, image_ids:list, budget:int):
+def coreset(points_:list, image_ids:list, budget:int, already_selected:list=[]):
     """
     points : image feature, if 100 images, 100x1000x12
     image_id : image Ids
@@ -145,15 +148,16 @@ def coreset(points_:list, image_ids:list, budget:int):
     points_ = softmax(points_,axis=-1) # converting logits to softmax
     a,b,c = points_.shape
         
-    already_selected = []
+#     already_selected = already_selected
     points_ = np.reshape(points_,(a,b*c))
-    kc = kCenterGreedy(points_) # returns centers for the clusters
-    select = np.sort(kc.select_batch(already_selected,budget)) # select contains the index of selected features
+    kc = kCenterGreedy(points_, already_selected=already_selected) # returns centers for the clusters
+    select = np.sort(kc.select_batch(budget)) # select contains the index of selected features
     
     selection = []   
     for s in select:
         selection.append(image_ids[s]) # image ids for selected features
     return selection
+
 
 
 def irSet_Helper(model, unlabelLoader, budget, all_classes, save_dir, device):
@@ -207,22 +211,30 @@ def irSet_Helper2(model, unlabelLoader, budget, all_classes, save_dir, device, t
 
 
 
-def coreSet_Helper(model, unlabelLoader, budget, all_classes, save_dir, device):
-    unlabel_ids, cls_logits, _ = evaluate(model, unlabelLoader, device, save_dir, all_classes, False)
+def coreSet_Helper(model, fullLoader, budget, all_classes, save_dir, device, trainImageIds):
+    full_ids, cls_logits, _ = evaluate(model, fullLoader, device, save_dir, all_classes, False)
     cls_logits = [item.cpu().numpy() for item in cls_logits]
     ### This has been added as for some images the final proposed regions is not 1000 as usually is with resnet Backbone
     processed_logits=[]
     processed_ids=[]
-    for id_,arr in zip(unlabel_ids, cls_logits):
+    for id_,arr in zip(full_ids, cls_logits):
         if arr.shape==(1000,len(all_classes)):
             processed_logits.append(arr)
             processed_ids.append(id_)
 
     ###########################################
+
+    already_selected=[]
+    for id_ in trainImageIds:
+        try:
+            already_selected.append(processed_ids.index(id_))
+        except:
+            continue
+
     if device=="cuda":
         torch.cuda.empty_cache()
     
-    selected_ids = coreset(processed_logits, processed_ids, budget)
+    selected_ids = coreset(processed_logits, processed_ids, budget, already_selected)
     return selected_ids
 
 
@@ -294,3 +306,77 @@ def MCD_Helper(model, unlabelLoader, budget, device, T=5):
     selection = MCD(multi_logits_list, unlabel_ids, budget)
 
     return selection
+
+
+def hide_n_seek():
+    pass
+
+
+# class kCenterGreedy():
+#     def __init__(self, X, metric='euclidean'):
+#         self.features =X
+#         self.metric = metric
+#         self.min_distances = None
+#         self.n_obs = X.shape[0]
+#         self.already_selected = []
+#     def update_distances(self, cluster_centers, only_new=True, reset_dist=False):
+
+#         if reset_dist:
+#             self.min_distances = None
+#         if only_new:
+#             cluster_centers = [d for d in cluster_centers
+#                          if d not in self.already_selected]
+#         if cluster_centers:
+#             x = self.features[cluster_centers]
+#             dist = pairwise_distances(self.features,x,metric='euclidean')
+#             if self.min_distances is None:
+#                 self.min_distances = np.min(dist, axis=1).reshape(-1,1)
+#             else:
+#                 self.min_distances = np.minimum(self.min_distances, dist)
+
+#     def select_batch(self, already_selected, N):
+#         try:
+#             print('Calculating distances...')
+#             self.update_distances(already_selected, only_new=False, reset_dist=True)
+#         except:
+#             print('Using flat_X as features.')
+#             self.update_distances(already_selected, only_new=True, reset_dist=False)
+#         new_batch = []
+        
+#         for idx in range(N):
+#             if self.already_selected is None or idx == 0:
+#                 ind = np.random.choice(np.arange(self.n_obs))
+#             else:
+#                 ind = np.argmax(self.min_distances)
+#             assert ind not in already_selected
+#             self.update_distances([ind], only_new=True, reset_dist=False)
+
+#             new_batch.append(ind)
+#         print('Maximum distance from cluster centers is %0.2f'% max(self.min_distances))
+#         self.already_selected = already_selected
+#         return new_batch
+
+
+
+# def coreset(points_:list, image_ids:list, budget:int):
+#     """
+#     points : image feature, if 100 images, 100x1000x12
+#     image_id : image Ids
+#     distance_fn: euclidean
+#     budget
+#     return : list of selected ids. 
+#     """
+
+#     points_ = np.stack(points_)
+#     points_ = softmax(points_,axis=-1) # converting logits to softmax
+#     a,b,c = points_.shape
+        
+#     already_selected = []
+#     points_ = np.reshape(points_,(a,b*c))
+#     kc = kCenterGreedy(points_) # returns centers for the clusters
+#     select = np.sort(kc.select_batch(already_selected,budget)) # select contains the index of selected features
+    
+#     selection = []   
+#     for s in select:
+#         selection.append(image_ids[s]) # image ids for selected features
+#     return selection

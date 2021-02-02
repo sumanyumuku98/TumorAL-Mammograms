@@ -152,7 +152,9 @@ def AL_iteration(checkpoint_file, train_ids_file, budget, stop_length, al_iterat
             selected_ids = irSet_Helper(model, unlabelLoader, budget, all_classes, save_dir, device)
         elif algo_use=="CS":
             ## get Ids using CS
-            selected_ids = coreSet_Helper(model, unlabelLoader, budget, all_classes, save_dir, device)
+            fullData = AIIMS(transform=get_transform(False))
+            fullLoader = DataLoader(fullData, batch_size= 1, shuffle=False, num_workers=4, collate_fn=utils.collate_fn)
+            selected_ids = coreSet_Helper(model, fullLoader, budget, all_classes, save_dir, device, trainImageIds)
         elif algo_use=="entropy":
             ## Get ids using max entropy
             selected_ids = maxEntropy_Helper(model, unlabelLoader, budget, all_classes, save_dir, device)
