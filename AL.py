@@ -27,7 +27,7 @@ parser.add_argument("--epochs", type=int, default=1)
 parser.add_argument("--save_dir", type=str, default="./Tumor_iterations")
 parser.add_argument("--name", type=str, default="random")
 parser.add_argument("--budget", type=float, default=0.1)
-parser.add_argument("--AL", type=str, choices=["CS", "IR", "random", "MCD", "entropy"], default="random")
+parser.add_argument("--AL", type=str, choices=["CS", "occlusion", "random", "MCD", "entropy"], default="random")
 parser.add_argument("--initial_ckpt", type=str, required=True)
 parser.add_argument("--initial_ids", type=str, required=True)
 parser.add_argument("--cycles", type=int, default=5)
@@ -147,9 +147,10 @@ def AL_iteration(checkpoint_file, train_ids_file, budget, stop_length, al_iterat
 
         if algo_use=="random":
             selected_ids= sample(unlabelData.image_ids, budget)
-        elif algo_use=="IR":
-            ## get Ids using IR
-            selected_ids = irSet_Helper(model, unlabelLoader, budget, all_classes, save_dir, device)
+        elif algo_use=="occlusion":
+            ## get Ids using Hide N Seek
+            image_paths = unlabelData.getImagePaths()
+            selected_ids = hide_n_seek_helper(model, unlabelLoader, image_paths, budget, device, k=1)
         elif algo_use=="CS":
             ## get Ids using CS
             fullData = AIIMS(transform=get_transform(False))

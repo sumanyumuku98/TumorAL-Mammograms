@@ -10,9 +10,10 @@ from sklearn.metrics import pairwise_distances
 import utils
 from engine import evaluate
 from tqdm import tqdm
+from PIL import Image, ImageDraw
+import torchvision.transforms as transforms
 
-
-
+preprocess = transforms.ToTensor()
 
 
 def ir_numpy(array):
@@ -308,8 +309,70 @@ def MCD_Helper(model, unlabelLoader, budget, device, T=5):
     return selection
 
 
-def hide_n_seek():
-    pass
+def hide_n_seek(original_image_list:list, multiple_runs_list:list, image_ids:list, budget:int, k:int):
+    # Assuming that the preds are not empty for these images specified.
+    uncertainity_list=[]
+    for original_det, multiple_dets in zip(original_image_list, multiple_runs_list):
+        agg_uncertainity=0.0
+        for i in range(k):
+            orig_score = original_det[i]
+            occlude_scores = multiple_dets[i]
+            if occlude_scores:
+                agg_uncertainity+=(max(occlude_scores)-orig_score)
+            else:
+                agg_uncertainity+=(orig_score*(-1.0))
+        avg_uncertainity = float(agg_uncertainity)/k
+        uncertainity_list.append(avg_uncertainity)
+
+    ind = np.argsort(uncertainity_list)
+    reverse_ind = ind[::-1].tolist()
+
+    sorted_rev_ids = [image_ids[idx] for idx in reverse_ind]
+    return sorted_rev_ids[:budget]
+
+
+
+
+def hide_n_seek_helper(model, unlabelLoader, imgPath_list, budget, device, k):
+    model.eval()
+    det_scores_list=[]
+    multiple_runs_list=[]
+    selected_ids_list=[]
+    unlabeled_ids=[]
+
+    print("Evaluating Images...")
+    for i, (images, target) in enumerate(tqdm(unlabelLoader)):
+        images = list(img.to(device) for img in images)
+        detections, _ = model(images)
+        if not detections:
+            id_ = target[0]["image_id"].item()
+            selected_ids_list.append(id_)
+        else:
+            original_scores = detections[0]["scores"].detach().cpu().numpy()
+            original_boxes = detections[0]["boxes"].detach().cpu().numpy()
+
+            det_scores_list.append(original_scores.tolist())
+            unlabeled_ids.append(target[0]["image_id"].item())
+            occlude_list=[]
+
+            for j in range(k):
+                img_ = Image.open(imgPath_list[i])
+                img1 = ImageDraw.Draw(img_)
+                img1.rectangle(original_boxes[j].tolist(), fill="#000000")
+                img_pro = preprocess(img_).to(device)
+                occlude_dets, _ = model([img_pro])
+                occlude_list.append(occlude_dets[0]["scores"].detach().cpu().numpy().tolist())
+                del occlude_dets, img_pro
+
+            multiple_runs_list.append(occlude_list)
+        del images
+
+    # print("Length of images where there was no preds: %d" % len(selected_ids_list))
+    new_budget = budget - len(selected_ids_list)
+    new_selection = hide_n_seek(det_scores_list, multiple_runs_list, unlabeled_ids, new_budget, k)
+    final_selection = selected_ids_list+new_selection
+
+    return final_selection
 
 
 # class kCenterGreedy():

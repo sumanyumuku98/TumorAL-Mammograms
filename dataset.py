@@ -93,6 +93,18 @@ class AIIMS(Dataset):
             pos_filenames.append(anns["filename"].iloc[0])
         return pos_filenames
 
+    def getImagePaths(self):
+        image_paths=[]
+        for img_id in self.image_ids:
+            # img_id = self.image_ids[idx]
+            anns = self.df[self.df["image_id"]==img_id]
+            image_name = anns["filename"].iloc[0]
+            image_paths.append(os.path.join(self.imgPath, image_name))
+        return image_paths
+
+
+
+
 
 
 class CBIS_DDSM(Dataset):
