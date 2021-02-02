@@ -309,11 +309,12 @@ def MCD_Helper(model, unlabelLoader, budget, device, T=5):
     return selection
 
 
-def hide_n_seek(original_image_list:list, multiple_runs_list:list, image_ids:list, budget:int, k:int):
+def hide_n_seek(original_image_list:list, multiple_runs_list:list, image_ids:list, budget:int):
     # Assuming that the preds are not empty for these images specified.
     uncertainity_list=[]
     for original_det, multiple_dets in zip(original_image_list, multiple_runs_list):
         agg_uncertainity=0.0
+        k = len(multiple_dets)
         for i in range(k):
             orig_score = original_det[i]
             occlude_scores = multiple_dets[i]
@@ -344,18 +345,20 @@ def hide_n_seek_helper(model, unlabelLoader, imgPath_list, budget, device, k):
     for i, (images, target) in enumerate(tqdm(unlabelLoader)):
         images = list(img.to(device) for img in images)
         detections, _ = model(images)
-        if not detections:
+        len_ = len(detections[0]["scores"].detach().cpu().numpy())
+        if len_==0:
             id_ = target[0]["image_id"].item()
             selected_ids_list.append(id_)
         else:
             original_scores = detections[0]["scores"].detach().cpu().numpy()
             original_boxes = detections[0]["boxes"].detach().cpu().numpy()
-
+            
+            k_ = min(len(original_scores), k)
             det_scores_list.append(original_scores.tolist())
             unlabeled_ids.append(target[0]["image_id"].item())
             occlude_list=[]
 
-            for j in range(k):
+            for j in range(k_):
                 img_ = Image.open(imgPath_list[i])
                 img1 = ImageDraw.Draw(img_)
                 img1.rectangle(original_boxes[j].tolist(), fill="#000000")
@@ -368,9 +371,12 @@ def hide_n_seek_helper(model, unlabelLoader, imgPath_list, budget, device, k):
         del images
 
     # print("Length of images where there was no preds: %d" % len(selected_ids_list))
-    new_budget = budget - len(selected_ids_list)
-    new_selection = hide_n_seek(det_scores_list, multiple_runs_list, unlabeled_ids, new_budget, k)
-    final_selection = selected_ids_list+new_selection
+    if len(selected_ids_list)<budget:
+        new_budget = budget - len(selected_ids_list)
+        new_selection = hide_n_seek(det_scores_list, multiple_runs_list, unlabeled_ids, new_budget)
+        final_selection = selected_ids_list+new_selection
+    else:
+        final_selection = sample(selected_ids_list, budget)
 
     return final_selection
 
