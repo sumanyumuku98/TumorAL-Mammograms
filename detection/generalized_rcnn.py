@@ -48,14 +48,29 @@ class GeneralizedRCNN(nn.Module):
         if isinstance(features, torch.Tensor):
             features = OrderedDict([(0, features)])
         proposals, proposal_losses = self.rpn(images, features, targets)
-        detections, detector_losses, class_logits = self.roi_heads(features, proposals, images.image_sizes, targets)
+        detections, detector_losses, class_logits, box_regression, box_features = self.roi_heads(features, proposals, images.image_sizes, targets)
+        
+        # print("BB of highest scoring box:", detections[0]["boxes"][0])
+        # print("score of highest scoring box:", detections[0]["scores"][0])
+
+        # old_detections = detections.copy()
         detections = self.transform.postprocess(detections, images.image_sizes, original_image_sizes)
 
+        # print(box_regression[0].shape)
         losses = {}
         losses.update(detector_losses)
         losses.update(proposal_losses)
 
+        dpp_dict={}
+        dpp_dict["logits"] = class_logits
+        dpp_dict["boxes"] = box_regression[0]
+        # dpp_dict["scores"] = box_scores[0]
+        dpp_dict["box_features"] = box_features
+        dpp_dict["tensor_size"] = images.image_sizes
+        dpp_dict["original_size"] = original_image_sizes
+        # dpp_dict["old_detections"] = old_detections
+
         if self.training:
             return losses
 
-        return detections, class_logits
+        return detections, dpp_dict

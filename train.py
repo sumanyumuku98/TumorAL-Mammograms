@@ -32,6 +32,7 @@ parser.add_argument("--seed", type=int, default=23)
 parser.add_argument("--print_freq", type=int, default=20)
 # parser.add_argument("--img_path", type=str, default="")
 
+# Seed used till now 23=> full data 45=> initial_ALrun1
 args = parser.parse_args()
 
 random.seed(args.seed)

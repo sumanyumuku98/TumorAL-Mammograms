@@ -3,7 +3,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 from scipy.special import softmax
-from scipy.stats import entropy
+from scipy.stats import entropy, pearsonr
 from collections import defaultdict
 from random import sample
 from sklearn.metrics import pairwise_distances
@@ -12,8 +12,21 @@ from engine import evaluate
 from tqdm import tqdm
 from PIL import Image, ImageDraw
 import torchvision.transforms as transforms
+from torchvision.models.detection.transform import GeneralizedRCNNTransform
+import numba
+from numba import jit
+from numpy import linalg
+
 
 preprocess = transforms.ToTensor()
+
+image_mean = [0.485, 0.456, 0.406]
+image_std = [0.229, 0.224, 0.225]
+min_size=800
+max_size=1333
+dpp_transform = GeneralizedRCNNTransform(min_size, max_size, image_mean, image_std)
+dpp_transform.eval()
+
 
 
 def ir_numpy(array):
@@ -380,72 +393,323 @@ def hide_n_seek_helper(model, unlabelLoader, imgPath_list, budget, device, k):
 
     return final_selection
 
+def bb_intersection_over_union(boxA, boxB):
+    # determine the (x, y)-coordinates of the intersection rectangle
+    xA = max(boxA[0], boxB[0])
+    yA = max(boxA[1], boxB[1])
+    xB = min(boxA[2], boxB[2])
+    yB = min(boxA[3], boxB[3])
 
-# class kCenterGreedy():
-#     def __init__(self, X, metric='euclidean'):
-#         self.features =X
-#         self.metric = metric
-#         self.min_distances = None
-#         self.n_obs = X.shape[0]
-#         self.already_selected = []
-#     def update_distances(self, cluster_centers, only_new=True, reset_dist=False):
+    # compute the area of intersection rectangle
+    interArea = abs(max((xB - xA, 0)) * max((yB - yA), 0))
+    if interArea == 0:
+        return 0
+    # compute the area of both the prediction and ground-truth
+    # rectangles
+    boxAArea = abs((boxA[2] - boxA[0]) * (boxA[3] - boxA[1]))
+    boxBArea = abs((boxB[2] - boxB[0]) * (boxB[3] - boxB[1]))
 
-#         if reset_dist:
-#             self.min_distances = None
-#         if only_new:
-#             cluster_centers = [d for d in cluster_centers
-#                          if d not in self.already_selected]
-#         if cluster_centers:
-#             x = self.features[cluster_centers]
-#             dist = pairwise_distances(self.features,x,metric='euclidean')
-#             if self.min_distances is None:
-#                 self.min_distances = np.min(dist, axis=1).reshape(-1,1)
-#             else:
-#                 self.min_distances = np.minimum(self.min_distances, dist)
+    # compute the intersection over union by taking the intersection
+    # area and dividing it by the sum of prediction + ground-truth
+    # areas - the interesection area
+    iou = interArea / float(boxAArea + boxBArea - interArea)
 
-#     def select_batch(self, already_selected, N):
-#         try:
-#             print('Calculating distances...')
-#             self.update_distances(already_selected, only_new=False, reset_dist=True)
-#         except:
-#             print('Using flat_X as features.')
-#             self.update_distances(already_selected, only_new=True, reset_dist=False)
-#         new_batch = []
-        
-#         for idx in range(N):
-#             if self.already_selected is None or idx == 0:
-#                 ind = np.random.choice(np.arange(self.n_obs))
-#             else:
-#                 ind = np.argmax(self.min_distances)
-#             assert ind not in already_selected
-#             self.update_distances([ind], only_new=True, reset_dist=False)
+    # return the intersection over union value
+    return iou
 
-#             new_batch.append(ind)
-#         print('Maximum distance from cluster centers is %0.2f'% max(self.min_distances))
-#         self.already_selected = already_selected
-#         return new_batch
+def getSubArr(matrix, indices):
+    return matrix[indices][:,indices]
+
+@jit(nopython=True)
+def inter_op1(arr1):
+    arr2 = np.zeros((arr1.shape[0], arr1.shape[0]))
+    for i, boxA in enumerate(arr1):
+        for j, boxB in enumerate(arr1):
+            result=None
+            xA = max(boxA[0], boxB[0])
+            yA = max(boxA[1], boxB[1])
+            xB = min(boxA[2], boxB[2])
+            yB = min(boxA[3], boxB[3])
+            interArea = abs(max((xB - xA, 0)) * max((yB - yA), 0))
+            if interArea==0:
+                result=0
+            else:
+                boxAArea = abs((boxA[2] - boxA[0]) * (boxA[3] - boxA[1]))
+                boxBArea = abs((boxB[2] - boxB[0]) * (boxB[3] - boxB[1]))
+
+                # compute the intersection over union by taking the intersection
+                # area and dividing it by the sum of prediction + ground-truth
+                # areas - the interesection area
+                iou = interArea / float(boxAArea + boxBArea - interArea)
+
+                # return the intersection over union value
+                result = iou
 
 
 
-# def coreset(points_:list, image_ids:list, budget:int):
-#     """
-#     points : image feature, if 100 images, 100x1000x12
-#     image_id : image Ids
-#     distance_fn: euclidean
-#     budget
-#     return : list of selected ids. 
-#     """
-
-#     points_ = np.stack(points_)
-#     points_ = softmax(points_,axis=-1) # converting logits to softmax
-#     a,b,c = points_.shape
-        
-#     already_selected = []
-#     points_ = np.reshape(points_,(a,b*c))
-#     kc = kCenterGreedy(points_) # returns centers for the clusters
-#     select = np.sort(kc.select_batch(already_selected,budget)) # select contains the index of selected features
+            arr2[i,j] = result
     
-#     selection = []   
-#     for s in select:
-#         selection.append(image_ids[s]) # image ids for selected features
-#     return selection
+    return arr2
+
+
+@jit(nopython=True)
+def inter_op2(arr1):
+    arr2 = np.zeros((arr1.shape[0], arr1.shape[0]))
+
+    for i, x in enumerate(arr1):
+        for j, y in enumerate(arr1):
+            result=None
+            n = len(x)
+            x = np.asarray(x)
+            y = np.asarray(y)
+            dtype = type(1.0 + x[0] + y[0])
+
+            if n == 2:
+                result=dtype(np.sign(x[1] - x[0])*np.sign(y[1] - y[0]))
+            else:
+                xmean = np.mean(x)
+                ymean = np.mean(y)
+                xm = x.astype(dtype) - xmean
+                ym = y.astype(dtype) - ymean
+                normxm = linalg.norm(xm)
+                normym = linalg.norm(ym)
+
+                threshold = 1e-13
+                r = np.dot(xm/normxm, ym/normym)
+                r = max(min(r, 1.0), -1.0)
+                result = r
+
+            arr2[i,j] = result
+    
+    return arr2
+
+@jit(nopython=True)
+def inter_op3(arr1, arr2):
+    arr3 = np.zeros((arr1.shape[0], arr1.shape[0]))
+    for i in range(arr3.shape[0]):
+        for j in range(arr3.shape[1]):
+            arr3[i,j] = arr1[i]*arr1[j]*arr2[i,j]
+    return arr3
+
+def dpp_inference(cls_logits:np.ndarray, cls_boxes:np.ndarray, proposal_features:np.ndarray, budget):
+    """
+    Args:
+        cls_logits: [1000,N] class logits 
+        cls_boxes: [1000,4] bounding box locations for the proposals
+        proposal_features: [1000,1024] dim features of each candidate proposal
+        budget: Maximum number of boxes to return after DDP inference
+    Returns:
+        A dict containing boxes, scores and labels in decending order of scores.
+
+    Note: This will return budget boxes for 1 image for all images evaluate in
+        a loop
+    """
+    assert cls_logits.shape[0]==cls_boxes.shape[0]==proposal_features.shape[0]
+    d_matrix = np.zeros((cls_logits.shape[0], cls_logits.shape[0]))
+    detection_dict={}
+    iou_matrix = np.zeros_like(d_matrix)
+    correlation_matrix = np.zeros_like(d_matrix)
+    scores = softmax(cls_logits, axis=-1)
+    tumor_probs = scores[:,1]
+    tumor_boxes = cls_boxes
+
+    # Calculating IOU
+    iou_matrix = inter_op1(tumor_boxes)
+    
+    # Claculating Pearson Coefficient
+    correlation_matrix = inter_op2(proposal_features)
+
+    similarity_matrix = 0.5*correlation_matrix+0.5*iou_matrix
+
+    # Calculating Final similarity
+    d_matrix = inter_op3(tumor_probs, similarity_matrix)
+    
+    selected_indices=[]
+    for i in range(budget):
+        value_list=[]
+        for j in range(d_matrix.shape[0]):
+            if j in selected_indices:
+                continue
+            else:
+                temp_list = selected_indices.copy()
+                temp_list.append(j)
+                temp_list.sort()
+                subarr = getSubArr(d_matrix, temp_list)
+                value_list.append(np.linalg.det(subarr))
+
+        new_index = np.argmax(value_list)
+        selected_indices.append(new_index)
+    
+    selected_boxes = tumor_boxes[selected_indices]
+    selected_scores = tumor_probs[selected_indices]
+
+    ind_ = np.argsort(selected_scores)
+    ind_ = ind_[::-1]
+    final_scores = selected_scores[ind_]
+    final_boxes = selected_boxes[ind_]
+    labels = np.ones_like(final_scores).astype(np.int8)
+
+    detection_dict["boxes"] = final_boxes
+    detection_dict["scores"] = final_scores
+    detection_dict["labels"] = labels
+
+    return detection_dict, selected_indices
+
+
+def coreset_dppHelper(model, fullLoader, budget, device, trainImageIds, rep_boxes=5):
+    model.eval()
+    image_ids=[]
+    proposal_features=[]
+
+    for i, (images, target) in enumerate(tqdm(fullLoader)):
+        images = list(img.to(device) for img in images)
+        _, dpp_dict = model(images)
+        detections, p_indices = dpp_inference(dpp_dict["logits"].detach().cpu().numpy(), dpp_dict["boxes"].detach().cpu().numpy(), dpp_dict["box_features"].detach().cpu().numpy(), rep_boxes)
+        proposal_all = dpp_dict["box_features"].detach().cpu().numpy()
+        proposal_selected = proposal_all[p_indices]
+        id_ = target[0]["image_id"].item()
+
+        proposal_features.append(proposal_selected)
+        image_ids.append(id_)
+
+    assert len(proposal_features) == len(image_ids)
+
+    already_selected=[]
+    for id_ in trainImageIds:
+        try:
+            already_selected.append(image_ids.index(id_))
+        except:
+            continue
+
+    if device=="cuda":
+        torch.cuda.empty_cache()
+
+    selected_ids = coreset(proposal_features, image_ids, budget, already_selected)
+
+    return selected_ids
+
+
+
+def occlusion_dppHelper(model, unlabelLoader, imgPath_list, budget, device, k):
+    model.eval()
+    det_scores_list=[]
+    multiple_runs_list=[]
+    selected_ids_list=[]
+    unlabeled_ids=[]
+    print("Evaluating Images...")
+    for i, (images, target) in enumerate(tqdm(unlabelLoader)):
+        images = list(img.to(device) for img in images)
+        _, dpp_dict = model(images)
+
+        # Do DPP inference here using DPP Dict
+        detections,_ = dpp_inference(dpp_dict["logits"].detach().cpu().numpy(), dpp_dict["boxes"].detach().cpu().numpy(), dpp_dict["box_features"].detach().cpu().numpy(), k)
+        detections["boxes"] = torch.from_numpy(detections["boxes"])
+        detections["scores"] = torch.from_numpy(detections["scores"])
+        detections["labels"] = torch.from_numpy(detections["labels"])
+        detections = dpp_transform.postprocess([detections], dpp_dict["tensor_size"], dpp_dict["original_size"])
+        ######################################
+        original_scores = detections[0]["scores"].detach().cpu().numpy()
+        original_boxes = detections[0]["boxes"].detach().cpu().numpy()
+            
+        k_ = min(len(original_scores), k)
+        det_scores_list.append(original_scores.tolist())
+        unlabeled_ids.append(target[0]["image_id"].item())
+        occlude_list=[]
+
+        for j in range(k_):
+            img_ = Image.open(imgPath_list[i])
+            img1 = ImageDraw.Draw(img_)
+            img1.rectangle(original_boxes[j].tolist(), fill="#000000")
+            img_pro = preprocess(img_).to(device)
+            occlude_dets, _ = model([img_pro])
+            occlude_list.append(occlude_dets[0]["scores"].detach().cpu().numpy().tolist())
+            del occlude_dets, img_pro
+
+        multiple_runs_list.append(occlude_list)
+
+        del images
+
+    if len(selected_ids_list)<budget:
+        new_budget = budget - len(selected_ids_list)
+        new_selection = hide_n_seek(det_scores_list, multiple_runs_list, unlabeled_ids, new_budget)
+        final_selection = selected_ids_list+new_selection
+    else:
+        final_selection = sample(selected_ids_list, budget)
+
+    return final_selection
+
+
+
+# def dpp_inference(cls_logits:np.ndarray, cls_boxes:np.ndarray, proposal_features:np.ndarray, budget):
+#     """
+#     Args:
+#         cls_logits: [1000,N] class logits 
+#         cls_boxes: [1000,4] bounding box locations for the proposals
+#         proposal_features: [1000,1024] dim features of each candidate proposal
+#         budget: Maximum number of boxes to return after DDP inference
+#     Returns:
+#         A dict containing boxes, scores and labels in decending order of scores.
+
+#     Note: This will return budget boxes for 1 image for all images evaluate in
+#         a loop
+#     """
+#     assert cls_logits.shape[0]==cls_boxes.shape[0]==proposal_features.shape[0]
+#     d_matrix = np.zeros((cls_logits.shape[0], cls_logits.shape[0]))
+#     detection_dict={}
+#     iou_matrix = np.zeros_like(d_matrix)
+#     correlation_matrix = np.zeros_like(d_matrix)
+#     scores = softmax(cls_logits, axis=-1)
+#     tumor_probs = scores[:,1]
+#     tumor_boxes = cls_boxes
+#     # if cls_boxes[0].device=="cpu":
+#     #     tumor_boxes = cls_boxes[0].detach().numpy()
+#     # else:
+#     #     tumor_boxes = cls_boxes[0].detach().cpu().numpy()
+    
+#     # Computational Heavy
+#     for i, box1 in enumerate(tumor_boxes):
+#         for j, box2 in enumerate(tumor_boxes):
+#             iou_matrix[i,j] = bb_intersection_over_union(box1, box2)
+    
+#     # Computational Heavy
+#     for i, f1 in enumerate(proposal_features):
+#         for j, f2 in enumerate(proposal_features):
+#             correlation_matrix[i,j] = pearsonr(f1,f2)[0]
+
+#     similarity_matrix = 0.5*correlation_matrix+0.5*iou_matrix
+
+#     # Computational Heavy
+#     for i in range(d_matrix.shape[0]):
+#         for j in range(d_matrix.shape[1]):
+#             d_matrix[i,j] = tumor_probs[i]*tumor_probs[j]*similarity_matrix[i,j]
+    
+#     selected_indices=[]
+#     for i in range(budget):
+#         value_list=[]
+#         for j in range(d_matrix.shape[0]):
+#             if j in selected_indices:
+#                 continue
+#             else:
+#                 temp_list = selected_indices.copy()
+#                 temp_list.append(j)
+#                 temp_list.sort()
+#                 subarr = getSubArr(d_matrix, temp_list)
+#                 value_list.append(np.linalg.det(subarr))
+
+#         new_index = np.argmax(value_list)
+#         selected_indices.append(new_index)
+    
+#     selected_boxes = tumor_boxes[selected_indices]
+#     selected_scores = tumor_probs[selected_indices]
+
+#     ind_ = np.argsort(selected_scores)
+#     ind_ = ind_[::-1]
+#     final_scores = selected_scores[ind_]
+#     final_boxes = selected_boxes[ind_]
+#     labels = np.ones_like(final_scores).astype(np.int8)
+
+#     detection_dict["boxes"] = final_boxes
+#     detection_dict["scores"] = final_scores
+#     detection_dict["labels"] = labels
+
+#     return detection_dict, selected_indices

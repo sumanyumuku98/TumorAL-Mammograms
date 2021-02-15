@@ -108,7 +108,8 @@ def evaluate(model, data_loader, device, save_dir, class_names=[], save_in_txt=F
 
         torch.cuda.synchronize()
         model_time = time.time()
-        outputs, logits = model(images)
+        outputs, dpp_dict = model(images)
+        logits = dpp_dict["logits"]
         # print(outputs)
 
         # min_regions=1e8

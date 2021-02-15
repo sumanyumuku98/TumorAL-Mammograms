@@ -34,6 +34,7 @@ parser.add_argument("--cycles", type=int, default=5)
 # parser.add_argument("--save_freq", type=int, default=1)
 parser.add_argument("--seed", type=int, default=23)
 parser.add_argument("--print_freq", type=int, default=20)
+parser.add_argument("--k", type=int, default=5)
 
 args = parser.parse_args()
 
@@ -150,12 +151,15 @@ def AL_iteration(checkpoint_file, train_ids_file, budget, stop_length, al_iterat
         elif algo_use=="occlusion":
             ## get Ids using Hide N Seek
             image_paths = unlabelData.getImagePaths()
-            selected_ids = hide_n_seek_helper(model, unlabelLoader, image_paths, budget, device, k=1)
+            selected_ids = occlusion_dppHelper(model, unlabelLoader, image_paths, budget, device, args.k)
+            # selected_ids = hide_n_seek_helper(model, unlabelLoader, image_paths, budget, device, k=args.k)
         elif algo_use=="CS":
             ## get Ids using CS
             fullData = AIIMS(transform=get_transform(False))
             fullLoader = DataLoader(fullData, batch_size= 1, shuffle=False, num_workers=4, collate_fn=utils.collate_fn)
-            selected_ids = coreSet_Helper(model, fullLoader, budget, all_classes, save_dir, device, trainImageIds)
+            selected_ids = coreset_dppHelper(model, fullLoader, budget, device, trainImageIds, args.k)
+
+            # selected_ids = coreSet_Helper(model, fullLoader, budget, all_classes, save_dir, device, trainImageIds)
         elif algo_use=="entropy":
             ## Get ids using max entropy
             selected_ids = maxEntropy_Helper(model, unlabelLoader, budget, all_classes, save_dir, device)

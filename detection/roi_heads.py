@@ -473,6 +473,8 @@ class RoIHeads(torch.nn.Module):
         boxes_per_image = [len(boxes_in_image) for boxes_in_image in proposals]
         pred_boxes = self.box_coder.decode(box_regression, proposals)
 
+        old_boxes = []
+        # old_scores=[]
         pred_scores = F.softmax(class_logits, -1)
 
         # split boxes and scores per image
@@ -496,16 +498,30 @@ class RoIHeads(torch.nn.Module):
 
             # batch everything, by making every class prediction be a separate instance
             boxes = boxes.reshape(-1, 4)
+            old_boxes.append(boxes)
             scores = scores.flatten()
             labels = labels.flatten()
-
+            # print("99th box initial:", scores[99], boxes[99])
             # remove low scoring boxes
             inds = torch.nonzero(scores > self.score_thresh).squeeze(1)
             boxes, scores, labels = boxes[inds], scores[inds], labels[inds]
 
+            # _, ind_ = torch.max(scores, dim=0)
+            # ind_ = ind_.item()
+            # print("99th box after removing low scoring:", scores[ind_], boxes[ind_])
+
             # remove empty boxes
             keep = box_ops.remove_small_boxes(boxes, min_size=1e-2)
             boxes, scores, labels = boxes[keep], scores[keep], labels[keep]
+
+            # _, ind_ = torch.max(scores, dim=0)
+            # ind_ = ind_.item()
+
+            # print("99th box after removing small boxes:", scores[ind_], boxes[ind_])
+
+            # old_scores.append(scores)
+            # old_boxes.append(boxes)
+
 
             # non-maximum suppression, independently done per class
             keep = box_ops.batched_nms(boxes, scores, labels, self.nms_thresh)
@@ -513,11 +529,17 @@ class RoIHeads(torch.nn.Module):
             keep = keep[:self.detections_per_img]
             boxes, scores, labels = boxes[keep], scores[keep], labels[keep]
 
+            # _, ind_ = torch.max(scores, dim=0)
+            # ind_ = ind_.item()
+
+            # print("99th box after NMS:", scores[ind_], boxes[ind_])
+
+
             all_boxes.append(boxes)
             all_scores.append(scores)
             all_labels.append(labels)
 
-        return all_boxes, all_scores, all_labels
+        return all_boxes, all_scores, all_labels, old_boxes
 
     def forward(self, features, proposals, image_shapes, targets=None):
         """
@@ -547,7 +569,7 @@ class RoIHeads(torch.nn.Module):
                 class_logits, box_regression, labels, regression_targets)
             losses = dict(loss_classifier=loss_classifier, loss_box_reg=loss_box_reg)
         else:
-            boxes, scores, labels = self.postprocess_detections(class_logits, box_regression, proposals, image_shapes)
+            boxes, scores, labels, box_coords = self.postprocess_detections(class_logits, box_regression, proposals, image_shapes)
             num_images = len(boxes)
             for i in range(num_images):
                 result.append(
@@ -621,4 +643,4 @@ class RoIHeads(torch.nn.Module):
 
             losses.update(loss_keypoint)
 
-        return result, losses, class_logits
+        return result, losses, class_logits, box_coords, box_features
